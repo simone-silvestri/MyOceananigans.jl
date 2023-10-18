@@ -24,6 +24,9 @@ function PressureSolver(arch::Distributed, local_grid::RegRectilinearGrid)
     return DistributedFFTBasedPoissonSolver(global_grid, local_grid)
 end
 
+PressureSolver(arch::Distributed, local_grid) = 
+    PCGPoissonSolver(local_grid; localiter = 30)
+
 PressureSolver(arch, grid::RegRectilinearGrid)   = FFTBasedPoissonSolver(grid)
 PressureSolver(arch, grid::XYRegRectilinearGrid) = FourierTridiagonalPoissonSolver(grid)
 PressureSolver(arch, grid::XZRegRectilinearGrid) = FourierTridiagonalPoissonSolver(grid)

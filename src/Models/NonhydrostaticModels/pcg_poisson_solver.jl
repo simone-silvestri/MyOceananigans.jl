@@ -109,7 +109,7 @@ function compute_laplacian!(∇²ϕ, ϕ, params, localiter)
 
     launch!(arch, grid, params, laplacian!, ∇²ϕ, grid, ϕ)
 
-    iter[] = only_local_halos ? 0 : iter[] + 1
+    iter[] = only_local_halos ? iter[] + 1 : 0
 
     return nothing
 end
