@@ -19,13 +19,10 @@ import Oceananigans: fields, prognostic_fields
 import Oceananigans.Advection: cell_advection_timescale
 import Oceananigans.TimeSteppers: step_lagrangian_particles!
 
-function PressureSolver(arch::Distributed, local_grid::RegRectilinearGrid)
-    global_grid = reconstruct_global_grid(local_grid)
-    return DistributedFFTBasedPoissonSolver(global_grid, local_grid)
-end
-
-PressureSolver(arch::Distributed, local_grid) = 
-    PCGPoissonSolver(local_grid; localiter = 30)
+# function PressureSolver(arch::Distributed, local_grid::RegRectilinearGrid)
+#     global_grid = reconstruct_global_grid(local_grid)
+#     return DistributedFFTBasedPoissonSolver(global_grid, local_grid)
+# end
 
 PressureSolver(arch, grid::RegRectilinearGrid)   = FFTBasedPoissonSolver(grid)
 PressureSolver(arch, grid::XYRegRectilinearGrid) = FourierTridiagonalPoissonSolver(grid)
@@ -78,5 +75,10 @@ include("pressure_correction.jl")
 include("nonhydrostatic_tendency_kernel_functions.jl")
 include("compute_nonhydrostatic_tendencies.jl")
 include("compute_nonhydrostatic_boundary_tendencies.jl")
+
+include("pcg_poisson_solver.jl")
+
+PressureSolver(arch::Distributed, local_grid) = 
+    PCGPoissonSolver(local_grid; localiter = 30)
 
 end # module

@@ -171,13 +171,13 @@ function solve!(x, solver::PreconditionedConjugateGradientSolver, b, args...)
     @debug "PreconditionedConjugateGradientSolver, |A * x|: $(norm(q))"
 
     while iterating(solver, tolerance)
-        iterate!(x, solver, b, args...)
+        iterate!(x, solver, args...)
     end
     
     return x
 end
 
-function iterate!(x, solver, b, args...)
+function iterate!(x, solver, args...)
     r = solver.residual
     p = solver.search_direction
     q = solver.linear_operator_product
@@ -232,6 +232,7 @@ function perform_iteration!(q, p, ρ, z, solver, args...)
         @debug "PreconditionedConjugateGradientSolver $(solver.iteration), β: $β"
     end
 
+    @show args
     # q = A * p
     solver.linear_operation!(q, p, args...)
     return nothing

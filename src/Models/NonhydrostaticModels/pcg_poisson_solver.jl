@@ -10,26 +10,28 @@ using Oceananigans.Utils: launch!
 using Oceananigans.Models.NonhydrostaticModels: PressureSolver, calculate_pressure_source_term_fft_based_solver!
 using Oceananigans.ImmersedBoundaries: mask_immersed_field!
 
-using Oceananigans.DistributedComputations: ranks, topology, halo_size
+using Oceananigans.DistributedComputations: topology, halo_size, DistributedGrid, DistributedField
 
 using KernelAbstractions: @kernel, @index
 
 import Oceananigans.Solvers: precondition!
 import Oceananigans.Models.NonhydrostaticModels: solve_for_pressure!
+import Statistics: norm, dot
 
-struct PCGPoissonSolver{R, G, I, K, S}
+@inline norm(f::DistributedField) = all_reduce(+, norm(f), architecture(f.grid))
+@inline dot(f::DistributedField, g::DistributedField) = all_reduce(+, dot(f, g), architecture(f.grid))
+
+struct PCGPoissonSolver{R, G, N, I, K, S}
     rhs :: R
     grid :: G
-    localiter :: Int
+    localiter :: N
     iter :: I
     kernel_params :: K
     pcg_solver :: S
 end
 
-const DDPC = DiagonallyDominantPreconditioner
-
 function PCGPoissonSolver(grid;
-                          preconditioner = DDPC(),
+                          preconditioner = DiagonallyDominantPreconditioner(),
                           localiter = nothing,
                           reltol = eps(eltype(grid)),
                           abstol = 0,
@@ -76,11 +78,11 @@ end
     return (Ax, Ay, 0)
 end
 
-@inline pcg_inflate_halo_size(localiter, grid) = grid
-
+@inline pcg_inflate_halo_size(::Nothing, grid) = grid
+@inline pcg_inflate_halo_size(::Nothing, grid::DistributedGrid) = grid
 @inline function pcg_inflate_halo_size(localiter, grid::DistributedGrid)
     Hx, Hy, Hz = halo_size(grid)
-    Rx, Ry, _  = ranks(architecture(grid).partition)
+    Rx, Ry, _  = architecture(grid).ranks
 
     Ax = Rx == 1 ? Hx : localiter + 1
     Ay = Ry == 1 ? Hy : localiter + 1
@@ -100,7 +102,7 @@ end
     @inbounds ∇²ϕ[i, j, k] = laplacianᶜᶜᶜ(i, j, k, grid, ϕ)
 end
 
-function compute_laplacian!(∇²ϕ, ϕ, params, localiter)
+function compute_laplacian!(∇²ϕ, ϕ, params, localiter, iter, args...)
     grid = ϕ.grid
     arch = architecture(grid)
 
@@ -140,16 +142,16 @@ function solve_for_pressure!(pressure, solver::PCGPoissonSolver, Δt, U★)
 
     # Solve pressure Pressure equation for pressure, given rhs
     # @info "Δt before pressure solve: $(Δt)"
-    solve!(pressure, solver.pcg_solver, rhs, solver.kernel_params, solver.iter)
+    solve!(pressure, solver.pcg_solver, rhs, solver.kernel_params, solver.localiter, solver.iter)
 
     solver.iter[] = 0
 
-    return pressure
+    return pressure 
 end
 
 struct DiagonallyDominantPreconditioner end
 
-@inline function precondition!(P_r, ::DiagonallyDominantPreconditioner, r, params, iter, args...)
+@inline function precondition!(P_r, ::DiagonallyDominantPreconditioner, r, params, localiter, iter, args...)
     grid = r.grid
     arch = architecture(P_r)
 
