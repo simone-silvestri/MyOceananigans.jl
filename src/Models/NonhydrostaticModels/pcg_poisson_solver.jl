@@ -30,7 +30,7 @@ const DDPC = DiagonallyDominantPreconditioner
 
 function PCGPoissonSolver(grid;
                           preconditioner = DDPC(),
-                          localiter = 20,
+                          localiter = nothing,
                           reltol = eps(eltype(grid)),
                           abstol = 0,
                           kw...)
