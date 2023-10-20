@@ -232,7 +232,6 @@ function perform_iteration!(q, p, ρ, z, solver, args...)
         @debug "PreconditionedConjugateGradientSolver $(solver.iteration), β: $β"
     end
 
-    @show args
     # q = A * p
     solver.linear_operation!(q, p, args...)
     return nothing

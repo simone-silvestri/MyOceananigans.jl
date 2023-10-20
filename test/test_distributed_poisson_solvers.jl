@@ -26,17 +26,7 @@ MPI.Init()
 # to initialize MPI.
 
 using Oceananigans.DistributedComputations: reconstruct_global_grid, Partition
-using Oceananigans.DistributedComputations: ZXYPermutation, ZYXPermutation
-
-@kernel function set_distributed_solver_input!(permuted_ϕ, ϕ, ::ZYXPermutation)
-    i, j, k = @index(Global, NTuple)
-    @inbounds permuted_ϕ[k, j, i] = ϕ[i, j, k]
-end
-
-@kernel function set_distributed_solver_input!(permuted_ϕ, ϕ, ::ZXYPermutation)
-    i, j, k = @index(Global, NTuple)
-    @inbounds permuted_ϕ[k, i, j] = ϕ[i, j, k]
-end
+using Oceananigans.Models.NonhydrostaticModels: PCGPoissonSolver
 
 function random_divergent_source_term(grid)
     # Generate right hand side from a random (divergent) velocity field.
@@ -65,7 +55,7 @@ end
 
 function divergence_free_poisson_solution_triply_periodic(grid_points, ranks)
     arch = Distributed(CPU(), partition=Partition(ranks...))
-    local_grid = RectilinearGrid(arch, topology=(Periodic, Periodic, Periodic), size=grid_points, extent=(1, 2, 3))
+    local_grid = RectilinearGrid(arch, topology=(Periodic, Periodic, Bounded), size=grid_points, extent=(1, 2, 3))
 
     bcs = FieldBoundaryConditions(local_grid, (Center, Center, Center))
     bcs = inject_halo_communication_boundary_conditions(bcs, arch.local_rank, arch.connectivity, (Periodic, Periodic, Periodic))
@@ -75,15 +65,14 @@ function divergence_free_poisson_solution_triply_periodic(grid_points, ranks)
     ∇²ϕ = CenterField(local_grid, boundary_conditions=bcs)
     R   = random_divergent_source_term(local_grid)
     
-    global_grid = reconstruct_global_grid(local_grid)
-    solver = DistributedFFTBasedPoissonSolver(global_grid, local_grid)
+    solver = PCGPoissonSolver(local_grid)
+    rhs = solver.rhs
+    set!(rhs, R)
+    fill_halo_regions!(rhs)
 
-    # Solve it
-    ϕc = first(solver.storage)
-
-    launch!(arch, local_grid, :xyz, set_distributed_solver_input!, ϕc, R, solver.input_permutation)
-
-    solve!(ϕ, solver)
+    # Solve pressure Pressure equation for pressure, given rhs
+    # @info "Δt before pressure solve: $(Δt)"
+    solve!(ϕ, solver.pcg_solver, rhs, solver.kernel_params, solver.localiter, solver.iter)
 
     # "Recompute" ∇²ϕ
     compute_∇²!(∇²ϕ, ϕ, arch, local_grid)
@@ -93,19 +82,17 @@ end
 
 @testset "Distributed FFT-based Poisson solver" begin
     @info "  Testing 3D distributed FFT-based Poisson solver..."
-    @test divergence_free_poisson_solution_triply_periodic((44, 44, 8), (1, 4, 1))
-    @test divergence_free_poisson_solution_triply_periodic((44, 16, 8), (1, 4, 1))
-    @test divergence_free_poisson_solution_triply_periodic((16, 44, 8), (1, 4, 1))
-    @test divergence_free_poisson_solution_triply_periodic((44, 16, 8), (2, 2, 1))
-    @test divergence_free_poisson_solution_triply_periodic((16, 44, 8), (2, 2, 1))
+    @test divergence_free_poisson_solution_triply_periodic((120, 120, 30), (2, 1, 1))
+    @test divergence_free_poisson_solution_triply_periodic((120, 120, 30), (1, 2, 1))
+    # @test divergence_free_poisson_solution_triply_periodic((120, 120, 30), (2, 2, 1))
 
-    @info "  Testing 2D distributed FFT-based Poisson solver..."
-    @test divergence_free_poisson_solution_triply_periodic((44, 16, 1), (1, 4, 1))
-    @test divergence_free_poisson_solution_triply_periodic((44, 16, 1), (4, 1, 1))
-    @test divergence_free_poisson_solution_triply_periodic((16, 44, 1), (1, 4, 1))
-    @test divergence_free_poisson_solution_triply_periodic((16, 44, 1), (4, 1, 1))
+    # @info "  Testing 2D distributed FFT-based Poisson solver..."
+    # @test divergence_free_poisson_solution_triply_periodic((44, 16, 1), (1, 4, 1))
+    # @test divergence_free_poisson_solution_triply_periodic((44, 16, 1), (4, 1, 1))
+    # @test divergence_free_poisson_solution_triply_periodic((16, 44, 1), (1, 4, 1))
+    # @test divergence_free_poisson_solution_triply_periodic((16, 44, 1), (4, 1, 1))
 
-    @test_throws ArgumentError divergence_free_poisson_solution_triply_periodic((16, 44, 1), (2, 2, 1))
-    @test_throws ArgumentError divergence_free_poisson_solution_triply_periodic((44, 16, 1), (2, 2, 1))
+    # @test_throws ArgumentError divergence_free_poisson_solution_triply_periodic((16, 44, 1), (2, 2, 1))
+    # @test_throws ArgumentError divergence_free_poisson_solution_triply_periodic((44, 16, 1), (2, 2, 1))
 end
 

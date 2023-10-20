@@ -10,7 +10,7 @@ using Oceananigans.Utils: launch!
 using Oceananigans.Models.NonhydrostaticModels: PressureSolver, calculate_pressure_source_term_fft_based_solver!
 using Oceananigans.ImmersedBoundaries: mask_immersed_field!
 
-using Oceananigans.DistributedComputations: topology, halo_size, DistributedGrid, DistributedField
+using Oceananigans.DistributedComputations: topology, all_reduce, halo_size, DistributedGrid, DistributedField
 
 using KernelAbstractions: @kernel, @index
 
@@ -18,8 +18,8 @@ import Oceananigans.Solvers: precondition!
 import Oceananigans.Models.NonhydrostaticModels: solve_for_pressure!
 import Statistics: norm, dot
 
-@inline norm(f::DistributedField) = all_reduce(+, norm(f), architecture(f.grid))
-@inline dot(f::DistributedField, g::DistributedField) = all_reduce(+, dot(f, g), architecture(f.grid))
+@inline norm(f::DistributedField) = all_reduce(+, norm(interior(f)), architecture(f.grid))
+@inline dot(f::DistributedField, g::DistributedField) = all_reduce(+, dot(interior(f), interior(g)), architecture(f.grid))
 
 struct PCGPoissonSolver{R, G, N, I, K, S}
     rhs :: R
@@ -30,8 +30,10 @@ struct PCGPoissonSolver{R, G, N, I, K, S}
     pcg_solver :: S
 end
 
+struct DiagonallyDominantPreconditioner end
+
 function PCGPoissonSolver(grid;
-                          preconditioner = DiagonallyDominantPreconditioner(),
+                          preconditioner = nothing, # DiagonallyDominantPreconditioner(),
                           localiter = nothing,
                           reltol = eps(eltype(grid)),
                           abstol = 0,
@@ -102,7 +104,7 @@ end
     @inbounds ∇²ϕ[i, j, k] = laplacianᶜᶜᶜ(i, j, k, grid, ϕ)
 end
 
-function compute_laplacian!(∇²ϕ, ϕ, params, localiter, iter, args...)
+function compute_laplacian!(∇²ϕ, ϕ, params, localiter, iter)
     grid = ϕ.grid
     arch = architecture(grid)
 
@@ -128,14 +130,9 @@ function solve_for_pressure!(pressure, solver::PCGPoissonSolver, Δt, U★)
     grid = solver.grid
     arch = architecture(grid)
 
-    if grid isa ImmersedBoundaryGrid
-        underlying_grid = grid.underlying_grid
-    else
-        underlying_grid = grid
-    end
 
     launch!(arch, grid, :xyz, calculate_pressure_source_term!,
-            rhs, underlying_grid, Δt, U★)
+            rhs, grid, Δt, U★)
 
     mask_immersed_field!(rhs, zero(grid))
     fill_halo_regions!(rhs)
@@ -149,9 +146,7 @@ function solve_for_pressure!(pressure, solver::PCGPoissonSolver, Δt, U★)
     return pressure 
 end
 
-struct DiagonallyDominantPreconditioner end
-
-@inline function precondition!(P_r, ::DiagonallyDominantPreconditioner, r, params, localiter, iter, args...)
+@inline function precondition!(P_r, ::DiagonallyDominantPreconditioner, r, params, localiter, iter)
     grid = r.grid
     arch = architecture(P_r)
 
